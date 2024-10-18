@@ -16,6 +16,7 @@
         packages = with pkgs; [
           # libclang # i give up on clang for c and clangd, i'll just rough it out with no lsp, not like it oughta matter that much anyway
           gcc
+          gnumake
         ];
       };
     }
