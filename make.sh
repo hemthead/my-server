@@ -14,8 +14,8 @@ for arg; do
       runargs="$@"
       #runargs=$(echo "$runargs" | cut -c 5-)
       runargs=${runargs#*run} # everything after "run" is an argument for the binary
-      printf "make.sh: running \"./bin$runargs\":\r\n\r\n" # run binary
-      ./bin ${runargs}
+      printf "make.sh: running \"./out/bin$runargs\":\r\n\r\n" # run binary
+      ./out/bin ${runargs}
       break # stop reading arguments after running
       ;;
     *)
