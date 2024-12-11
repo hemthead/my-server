@@ -8,11 +8,9 @@
 
 int main(int argc, char **argv) {
     struct HTTP_Server server;
-    enum HTTP_errno err;
+    struct HTTP_Error err;
 
-    err = HTTP_create_server(&server, 8080u);
-
-    err = HTTP_start_server(&server);
+    err = HTTP_create_server(&server, "8080");
 
     // ????????????
     
@@ -61,7 +59,6 @@ int main(int argc, char **argv) {
         close(client_sockfd);
     }
 
-    err = HTTP_stop_server(&server);
     err = HTTP_destroy_server(&server);
 
     return EXIT_SUCCESS;

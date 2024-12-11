@@ -5,132 +5,127 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <netdb.h>
+#include <string.h>
+
+#include "http.h"
     
-// normal errno errors are negative for convenience!
-// non-errors are 0
-// custom errors are positive
-enum HTTP_errno {
-    // errno errors
-    HTTP_ECLOSE = -5,
-    HTTP_ELISTEN = -4,
-    HTTP_EBIND = -3,
-    HTTP_ESETSOCKOPT = -2,
-    HTTP_ESOCKET = -1,
-
-    // non-error / Ok
-    HTTP_ENOERROR = 0, // default, result when no error occured
-
-    // custom errors
-};
-
 // not exposed in api
 // the strings for our errors
-char *HTTP_ENOERROR_STRING = "No error occured";
-char *HTTP_EERRNO_STRING = "System error, see errno";
+const char *HTTP_ENOERROR_STRING = "No error occured";
+const char *HTTP_ENOSOCKET_STRING = "No applicable socket was bound";
+const char *HTTP_EUNKNOWN_STRING = "Unknown error type";
 
-// get the string representation of an error
-char *HTTP_strerror(enum HTTP_errno err) {
-    if (err < 0)
-        return HTTP_ENOERROR_STRING;
+const char *HTTP_strerror(struct HTTP_Error err) {
+    if (err.type < 0) {
+        return strerror(err.info.errnum);
+    }
 
-    switch (err) {
+    switch (err.type) {
         case HTTP_ENOERROR:
             return HTTP_ENOERROR_STRING;
-        break;
+        case HTTP_ENOSOCKET:
+            return HTTP_ENOERROR_STRING;
+
+        case HTTP_EGETADDRINFO:
+            return gai_strerror(err.info.gai_errcode);
+
+        default:
+            return HTTP_EUNKNOWN_STRING;
     }
 }
 
-// print an HTTP_errno to stderr (like perror)
-void HTTP_perror(const char *s, enum HTTP_errno err) {
+void HTTP_perror(const char *s, struct HTTP_Error err) {
     fprintf(stderr, "%s: %s", s, HTTP_strerror(err));
 }
 
-struct HTTP_Server {
-    int socket_fd;
-    struct sockaddr_in address;
-    int listen_backlog;
-};
-
 const int HTTP_SETSOCKOPT_ENABLE = 1; // int for setsockopt to get pointed to
 
-// create the server's socket and address and set its socket options
-enum HTTP_errno HTTP_create_server(struct HTTP_Server *http_server, const uint16_t port) {
-    http_server->listen_backlog = SOMAXCONN; // backlog for `listen` call
+struct HTTP_Error HTTP_create_server(
+    struct HTTP_Server *http_server,
+    const char *restrict port
+) {
+    // initialize the return `HTTP_Error` to no-error
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
 
-    // create a socket for the server
-    http_server->socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (http_server->socket_fd == -1) {
-        return HTTP_ESOCKET;
-    }
+    // declare addrinfo structures to find an address that works for our server
+    struct addrinfo addr_hints, *potential_addresses; 
 
-    // set server to be at 0.0.0.0:<given port>
-    http_server->address.sin_family = AF_INET;
-    http_server->address.sin_addr.s_addr = htonl(INADDR_ANY); // should be 0.0.0.0 (broadcast/any)
-    http_server->address.sin_port = htons(port);
-
-    // set socket options
-    // REUSEADDR: 
-    if (setsockopt(
-        http_server->socket_fd,
-        SOL_SOCKET,
-        SO_REUSEADDR, // make optional?
-        &HTTP_SETSOCKOPT_ENABLE,
-        sizeof(HTTP_SETSOCKOPT_ENABLE)
-    ) == -1) {
-        return HTTP_ESETSOCKOPT;
-    }
-
-    return HTTP_ENOERROR;
-}
-
-/* Bind an HTTP_Server's socket and start listening. Should be accompanied by
-   a call to `HTTP_stop_server` to close the stream and tidy up when done. */
-enum HTTP_errno HTTP_start_server(struct HTTP_Server *http_server) {
-    // TODO: create socket if it is null (if server is restarting)
-    // HTTP_create_socket(http_server) as a general solution might be better?
+    // set the hints to our use-case
+    memset(&addr_hints, 0, sizeof(addr_hints));
+    addr_hints.ai_family = AF_UNSPEC; // IPv4 or IPv6
+    addr_hints.ai_socktype = SOCK_STREAM; // TCP socket, please
+    addr_hints.ai_flags = AI_PASSIVE; // We want to be able to bind this socket to
+                                   // accept connections
     
-    // finally bind the socket
-    if (bind(
-        http_server->socket_fd,
-        (struct sockaddr*)&http_server->address,
-        sizeof(http_server->address) // i'm pretty sure sizeof works here because
-                                     // we know the type of http_server->address
-    ) == -1) {
-        return HTTP_EBIND;
+    // find a socket to use and listen on, return any getaddrinfo errors
+    error.info.gai_errcode = getaddrinfo(NULL, port, &addr_hints, &potential_addresses);
+    if (error.info.gai_errcode != 0) {
+        error.type = HTTP_EGETADDRINFO;
+        return error;
     }
 
-    // start listening
-    if (listen(http_server->socket_fd, http_server->listen_backlog) == -1) {
-        return HTTP_ELISTEN;
-    }
-
-    // success, most outputs go through *http_server
-    return HTTP_ENOERROR;
-}
-
-/* Close an HTTP_Server's socket. Is a minimal wrapper over `close`. */
-enum HTTP_errno HTTP_stop_server(struct HTTP_Server *http_server) {
-    // NOTE: check logic in HTTP_destroy_server when modifying this
-    if (close(http_server->socket_fd) == -1)
-        return HTTP_ECLOSE;
-}
-
-/* Deallocate the innards of an HTTP_Server. NOTE: Does not deallocate the 
-   server's struct itself, just the insides */
-enum HTTP_errno HTTP_destroy_server(struct HTTP_Server *http_server) {
-// this will be more important once more logic comes in
-    // TODO: call HTTP_stop_server if necessary.
-    enum HTTP_errno err = HTTP_stop_server(http_server);
-
-    // potentially cover this case in HTTP_stop_server?
-    // TODO: yes
-    if (
-        err != HTTP_ENOERROR && // if: there was an error, and
-        !(err == HTTP_ECLOSE && errno == EBADF) // socket_fd existed
-    ) return err; // return that err (otherwise it's expected)
+    // set the socket_fd to -1 so we can tell if no applicable socket is found
+    http_server->socket_fd = -1;
+    // search through the returned addresses to find one that works
+    for (struct addrinfo *rp = potential_addresses; rp != NULL; rp = rp->ai_next) {
+        int socket_fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         
+        // go to the next address if we can't use this one
+        if (socket_fd == -1)
+            continue;
 
-    return HTTP_ENOERROR;
+        // try to set socket options or go to the next address
+        if (setsockopt(
+            socket_fd,
+            SOL_SOCKET,
+            SO_REUSEADDR, // reuse old sockets
+            &HTTP_SETSOCKOPT_ENABLE,
+            sizeof(HTTP_SETSOCKOPT_ENABLE)
+        ) == -1)
+            continue;
+
+        // try to bind the socket 
+        if (bind(socket_fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            // yay, we found a good one! set the socket and break out
+            http_server->socket_fd = socket_fd;
+            break;
+        }
+    }
+    freeaddrinfo(potential_addresses); // free up the list, we no longer need it
+
+    // return error if we couldn't find a good socket
+    if (http_server->socket_fd == -1) {
+        error.type = HTTP_ENOSOCKET;
+        return error;
+    }
+
+    // start listening on the socket, return any listen errors
+    if (listen(http_server->socket_fd, 10) == -1) {
+        error.type = HTTP_ELISTEN;
+        error.info.errnum = errno;
+        return error;
+    }
+
+    // no error
+    return error;
+}
+
+struct HTTP_Error HTTP_destroy_server(struct HTTP_Server *http_server) {
+    // initialize the return `HTTP_Error` to no-error
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
+
+    // try to close the socket
+    // return an error if `close` failed and the file descriptor was good
+    if (close(http_server->socket_fd) == -1 && errno != EBADF) {
+        error.type = HTTP_ECLOSE;
+        error.info.errnum = errno;
+        return error;
+    }
+
+    return error;
 }
 /*
     #define BUFFER_SIZE 1024
