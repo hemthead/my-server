@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
     struct HTTP_Server server;
     struct HTTP_Error err;
 
-    err = HTTP_create_server(&server, "8080");
+    err = HTTP_Server_init(&server, "8080");
 
     // ????????????
     
@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
     // accept an incoming connection
     for (;;) {
         int client_sockfd = accept(
-            server.socket_fd,
+            server.socket,
             (struct sockaddr*)&client_address,
             &client_len
         );
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
         case -1:
             perror("error: failed to recv data");
             close(client_sockfd);
-            HTTP_destroy_server(&server);
+            HTTP_Server_deinit(&server);
             exit(EXIT_FAILURE);
         default:
             break;
@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
         close(client_sockfd);
     }
 
-    err = HTTP_destroy_server(&server);
+    err = HTTP_Server_deinit(&server);
 
     return EXIT_SUCCESS;
 }

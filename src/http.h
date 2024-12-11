@@ -11,20 +11,20 @@
    Positive errors are custom errors that may be encountered. */
 enum HTTP_ErrType {
     // errno errors, check `info.errnum`
-    HTTP_ECLOSE = -5, /* `close` encountered a problem */
-    HTTP_ELISTEN = -4, /* `listen` encountered a problem */
+    HTTP_ECLOSE = -5, /* `close` encountered a problem. */
+    HTTP_ELISTEN = -4, /* `listen` encountered a problem. */
 
     // non-error / Ok
-    HTTP_ENOERROR = 0, /* default, result when no error occured */
+    HTTP_ENOERROR = 0, /* default, result when no error occured. */
 
-    HTTP_ENOSOCKET, /* No properly bindable socket was found */
+    HTTP_ENOSOCKET, /* No properly bindable socket was found. */
 
-    HTTP_EGETADDRINFO, /* `getaddrinfo` error occured, check `info.gai_errcode` */
+    HTTP_EGETADDRINFO, /* `getaddrinfo` error occured, check `info.gai_errcode`. */
 };
 
 union HTTP_ErrInfo {
-    int errnum; // the value of `errno` when an error occured
-    int gai_errcode; // a `getaddrinfo` error return value
+    int errnum; /* the value of `errno` when an error occured. */
+    int gai_errcode; /* a `getaddrinfo` error return value. */
 };
 
 struct HTTP_Error {
@@ -40,11 +40,9 @@ void HTTP_perror(const char *s, struct HTTP_Error err);
 
 /* This struct represents an HTTP server. */
 struct HTTP_Server {
-    int socket_fd; /* the file descriptor of the server's socket.
-                      Use ntoh[ls] family of functions to convert
-                      from network byte-order */
-    struct sockaddr_in address; /* the internet address that the server is 
-                                   bound to */
+    int socket; /* The file descriptor of the server's socket. */
+    struct sockaddr_in address; /* The internet address that the server is 
+                                   bound to. */
 };
 
 /* Create a new HTTP_Server that listens on the given port/service.
@@ -53,13 +51,24 @@ struct HTTP_Server {
    name works as well). Returns any errors encountered, as an HTTP_errno.
    Create's the HTTP_Server's socket and address and sets its socket options.
    Should be accompanied by a call to `HTTP_destroy_server` to tidy up when done. */
-struct HTTP_Error HTTP_create_server(
-    struct HTTP_Server *http_server,
+struct HTTP_Error HTTP_Server_init(
+    struct HTTP_Server *server,
     const char *restrict port
 );
 
-/* Deallocate the innards of an HTTP_Server. NOTES: Does not deallocate the 
-   server's struct itself, just the insides, does not handle EINTR automatically. */
-struct HTTP_Error HTTP_destroy_server(struct HTTP_Server *http_server);
+/* Shut of and deallocate the innards of an HTTP_Server. NOTES: Does not deallocate the 
+   server struct itself, just the insides; does not handle EINTR automatically. */
+struct HTTP_Error HTTP_Server_deinit(struct HTTP_Server *http_server);
+
+/* Represents an HTTP connection to a server client. */
+struct HTTP_Connection {
+    int socket_fd; /* The file descriptor of the connection to the client. */
+};
+
+/* Accept an `HTTP_Connection` from an `HTTP_Server`. */
+struct HTTP_Error HTTP_Server_accept(
+    struct HTTP_Server *server,
+    struct HTTP_Connection *connection
+);
 
 #endif /* _HTTP_SERVER_H */

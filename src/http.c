@@ -41,8 +41,8 @@ void HTTP_perror(const char *s, struct HTTP_Error err) {
 
 const int HTTP_SETSOCKOPT_ENABLE = 1; // int for setsockopt to get pointed to
 
-struct HTTP_Error HTTP_create_server(
-    struct HTTP_Server *http_server,
+struct HTTP_Error HTTP_Server_init(
+    struct HTTP_Server *server,
     const char *restrict port
 ) {
     // initialize the return `HTTP_Error` to no-error
@@ -67,7 +67,7 @@ struct HTTP_Error HTTP_create_server(
     }
 
     // set the socket_fd to -1 so we can tell if no applicable socket is found
-    http_server->socket_fd = -1;
+    server->socket = -1;
     // search through the returned addresses to find one that works
     for (struct addrinfo *rp = potential_addresses; rp != NULL; rp = rp->ai_next) {
         int socket_fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
@@ -89,20 +89,20 @@ struct HTTP_Error HTTP_create_server(
         // try to bind the socket 
         if (bind(socket_fd, rp->ai_addr, rp->ai_addrlen) == 0) {
             // yay, we found a good one! set the socket and break out
-            http_server->socket_fd = socket_fd;
+            server->socket = socket_fd;
             break;
         }
     }
     freeaddrinfo(potential_addresses); // free up the list, we no longer need it
 
     // return error if we couldn't find a good socket
-    if (http_server->socket_fd == -1) {
+    if (server->socket == -1) {
         error.type = HTTP_ENOSOCKET;
         return error;
     }
 
     // start listening on the socket, return any listen errors
-    if (listen(http_server->socket_fd, 10) == -1) {
+    if (listen(server->socket, 10) == -1) {
         error.type = HTTP_ELISTEN;
         error.info.errnum = errno;
         return error;
@@ -112,14 +112,14 @@ struct HTTP_Error HTTP_create_server(
     return error;
 }
 
-struct HTTP_Error HTTP_destroy_server(struct HTTP_Server *http_server) {
+struct HTTP_Error HTTP_Server_deinit(struct HTTP_Server *server) {
     // initialize the return `HTTP_Error` to no-error
     struct HTTP_Error error;
     memset(&error, 0, sizeof(error));
 
     // try to close the socket
     // return an error if `close` failed and the file descriptor was good
-    if (close(http_server->socket_fd) == -1 && errno != EBADF) {
+    if (close(server->socket) == -1 && errno != EBADF) {
         error.type = HTTP_ECLOSE;
         error.info.errnum = errno;
         return error;
