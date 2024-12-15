@@ -127,48 +127,170 @@ struct HTTP_Error HTTP_Server_deinit(struct HTTP_Server *server) {
 
     return error;
 }
-/*
-    #define BUFFER_SIZE 1024
-    char buffer[BUFFER_SIZE];
 
-    // accept an incoming connection
-    for (;;) {
-        int client_sockfd = accept(
-            server_sockfd,
-            (struct sockaddr*)&client_address,
-            &client_len
-        );
-        if (client_sockfd == -1) {
-            perror("error: failed to accept connection");
-            exit(EXIT_FAILURE);
-        }
+struct HTTP_Error HTTP_Server_accept(
+    struct HTTP_Server *server,
+    struct HTTP_Connection *connection
+) {
+    // create the error to return
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
 
-        fprintf(stdout, "server: received connection with %X\r\n", ntohl(client_address.sin_addr.s_addr));
-
-        ssize_t bytes_read = recv(client_sockfd, &buffer, BUFFER_SIZE, 0);
-        switch (bytes_read) {
-        case 0:
-            close(client_sockfd);
-            continue;
-        case -1:
-            perror("error: failed to recv data");
-            close(client_sockfd);
-            close(server_sockfd);
-            exit(EXIT_FAILURE);
-        default:
-            break;
-        }
-        
-        // print received message
-        for (ssize_t i = 0; i < bytes_read; ++i)
-            fputc(buffer[i], stdout);
-
-        char message[] = "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf=8\r\n\r\n<!DOCTYPE html><html><head><title>test</title></head><body><h1>no, lol</h1></body></html>\r\n";
-        
-        send(client_sockfd, &message, sizeof(message), 0);
-
-        close(client_sockfd);
+    // accept a connection to the server, returning error if necessary
+    connection->address_len = sizeof(connection->address);
+    if (accept(
+        server->socket,
+        (struct sockaddr *)&connection->address,
+        &connection->address_len
+    ) == -1) {
+        error.type = HTTP_EACCEPT;
+        error.info.errnum = errno;
+        return error;
     }
 
-    return EXIT_SUCCESS;
- */
+    // initialize the buffer variables of the connection
+    connection->buf_size = _HTTP_CONNECTION_BUF_SIZE;
+    connection->buf = malloc(connection->buf_size);
+    if (connection->buf == NULL) {
+        error.type = HTTP_EALLOC;
+        error.info.errnum = errno;
+        return error;
+    }
+
+    connection->read_index = 0;
+    connection->bytes_received = 0;
+
+    return error;
+}
+
+struct HTTP_Error read_status_and_headers(
+    struct HTTP_Connection *connection,
+    struct HTTP_Request *request,
+    size_t max_request_size
+) {
+    // create the error to return
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
+
+    const char needle[] = {'\r', '\n', '\r', '\n'}; // needle to search for (where headers end)
+    char cut_buf[2*sizeof(needle) - 2]; memset(&cut_buf, 0, sizeof(needle));
+    
+    // read status-line and headers into request data
+    while (request->_data_cap <= max_request_size) {
+        size_t header_end = 0;
+        
+        // search has to return the index after the end of the needle (that way 0 is err)
+        // look into Rabin-Karp (https://en.wikipedia.org/wiki/Rabin%E2%80%93Karp_algorithm)
+        // use the cut-off buffer if we've just `recv`ed more data
+        if (connection->read_index == 0) {
+            memcpy(cut_buf+(sizeof(needle)-1), connection->buf, sizeof(needle)-1);
+            header_end = search(cut_buf, sizeof(cut_buf), needle, sizeof(needle));
+
+            // exit the loop if we've found the end of the headers
+            if (header_end != 0) {
+                // add data to request, update read_index
+
+                // make sure we can fit the data into the request's array
+                while (request->_data_cap - request->_data_len <= sizeof(needle) - 1) {
+                    request->_data_cap *= 2;
+                    char *new_data_ptr = reallocarray(request->data, request->_data_cap, sizeof(char));
+                    if (new_data_ptr == NULL) {
+                        error.type = HTTP_EALLOC;
+                        error.info.errnum = errno;
+                        return error;
+                    }
+                    request->data = new_data_ptr;
+                }
+                memcpy(request->data+request->_data_len, cut_buf + ((header_end - 1) - sizeof(needle)), sizeof(needle));
+                connection->read_index = header_end - (sizeof(needle) - 1);
+                break;
+            }
+        }
+
+        // search the entire string for \r\n\r\n
+        header_end = search(connection->buf + connection->read_index, connection->bytes_received - connection->read_index, needle, sizeof(needle)); 
+
+        // exit the loop if we've found the end of the headers
+        if (header_end != 0) {
+            // add data to request, update read_index
+            // make sure we can fit the data into the request's array
+            while (request->_data_cap - request->_data_len <= sizeof(needle) - 1) {
+                request->_data_cap *= 2;
+                char *new_data_ptr = reallocarray(request->data, request->_data_cap, sizeof(char));
+                if (new_data_ptr == NULL) {
+                    error.type = HTTP_EALLOC;
+                    error.info.errnum = errno;
+                    return error;
+                }
+                request->data = new_data_ptr;
+            }
+
+            memcpy(request->data+request->_data_len, cut_buf + connection->read_index, connection->bytes_received - connection->read_index);
+            connection->read_index = header_end;
+            break;
+        }
+
+        // header has not yet ended
+        if (header_end == 0) {
+            // dump data into request, put the end in a buffer to check for cut-off needle, recv new data
+
+            // make sure we can fit the data into the request's array
+            while (request->_data_cap - request->_data_len <= sizeof(needle) - 1) {
+                request->_data_cap *= 2;
+                char *new_data_ptr = reallocarray(request->data, request->_data_cap, sizeof(char));
+                if (new_data_ptr == NULL) {
+                    error.type = HTTP_EALLOC;
+                    error.info.errnum = errno;
+                    return error;
+                }
+                request->data = new_data_ptr;
+            }
+
+            memcpy(request->data+request->_data_len, cut_buf + connection->read_index, connection->bytes_received - connection->read_index);
+
+            // recieve more data
+            connection->bytes_received = recv(connection->socket, connection->buf, connection->buf_size, 0); // consider some flags here
+            if (connection->bytes_received == -1) {
+                error.type = HTTP_ERECV;
+                error.info.errnum = errno;
+                return error;
+            }
+
+            connection->read_index = 0;
+        }
+    }
+}
+
+struct HTTP_Error HTTP_Connection_recv(
+    struct HTTP_Connection *connection,
+    struct HTTP_Request *request
+) {
+    // create the error to return
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
+
+    // init the request
+    memset(request, 0, sizeof(*request));
+    request->_data_cap = 1024; // start off with 1KiB of space
+    request->data = calloc(sizeof(char), request->_data_cap);
+
+    const size_t MAX_REQUEST_SIZE = 1024 * 8; // 8KiB at most
+
+    // Status-Line = METHOD URI VERSION "\r\n"
+    // Headers = *( TOKEN ":" VALUE "\r\n" ) "\r\n" (technically a header can span multiple lines if it \t tabs)
+    // Body = Content-Length( OCTET )
+    
+    // read until \r\n\r\n
+    error = read_status_and_headers(connection, request, MAX_REQUEST_SIZE);
+    if (error.type != HTTP_ENOERROR)
+        return error;
+
+    return NOTYETIMPLEMENTED;
+
+    // identify METHOD URI Content-Length etc.
+    // (We're only rocking HTTP/1.0, so we don't worry about content-type: chunked)
+
+    return error;
+}
+
+
