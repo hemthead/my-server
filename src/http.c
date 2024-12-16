@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "http.h"
+#include "search.h"
     
 // not exposed in api
 // the strings for our errors
@@ -284,8 +285,6 @@ struct HTTP_Error HTTP_Connection_recv(
     error = read_status_and_headers(connection, request, MAX_REQUEST_SIZE);
     if (error.type != HTTP_ENOERROR)
         return error;
-
-    return NOTYETIMPLEMENTED;
 
     // identify METHOD URI Content-Length etc.
     // (We're only rocking HTTP/1.0, so we don't worry about content-type: chunked)
