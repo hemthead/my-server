@@ -100,7 +100,11 @@ struct HTTP_Request {
                               the `Content-Length` header's value. */
 };
 
-/* Recieve an `HTTP_Request` from an `HTTP_Connection`. */
+/* Deallocates pointers inside `request` and generally deinitializes. */
+struct HTTP_Error HTTP_Request_deinit(struct HTTP_Request *request);
+
+/* Recieve an `HTTP_Request` from an `HTTP_Connection`. Allocates some memory in `request` and
+   does not free it on error. */
 struct HTTP_Error HTTP_Connection_recv(
     struct HTTP_Connection *connection,
     struct HTTP_Request *request

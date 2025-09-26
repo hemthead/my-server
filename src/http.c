@@ -164,6 +164,18 @@ struct HTTP_Error HTTP_Server_accept(
     return error;
 }
 
+struct HTTP_Error HTTP_Request_deinit(struct HTTP_Request *request) {
+    // create the error to return
+    struct HTTP_Error error;
+    memset(&error, 0, sizeof(error));
+
+    free(request->data);
+    request->_data_cap = 0;
+    request->_data_len = 0;
+
+    return error;
+}
+
 struct HTTP_Error read_status_and_headers(
     struct HTTP_Connection *connection,
     struct HTTP_Request *request,
@@ -262,6 +274,10 @@ struct HTTP_Error read_status_and_headers(
     }
 }
 
+struct HTTP_Error request_identify(struct HTTP_Request *request) {
+
+}
+
 struct HTTP_Error HTTP_Connection_recv(
     struct HTTP_Connection *connection,
     struct HTTP_Request *request
@@ -287,7 +303,13 @@ struct HTTP_Error HTTP_Connection_recv(
         return error;
 
     // identify METHOD URI Content-Length etc.
+    error = request_identify(request);
+    if (error.type != HTTP_ENOERROR)
+        return error;
+
     // (We're only rocking HTTP/1.0, so we don't worry about content-type: chunked)
+    
+    // read body
 
     return error;
 }
